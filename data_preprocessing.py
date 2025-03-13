@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from datetime import datetime
+from sklearn.preprocessing import StandardScaler
 
 def is_festive_season(date):
     """
@@ -194,3 +195,217 @@ def calculate_heat_index(temperature, humidity):
     
     # Convert back to Celsius
     return (hi - 32) * 5/9
+
+def prepare_time_series_data(data, target_col='Electricity Demand (MW)', date_col='Date'):
+    """
+    Prepare data for time series analysis (ARIMA and LSTM)
+    
+    Parameters:
+    -----------
+    data : pandas DataFrame
+        The input data containing time series
+    target_col : str
+        The name of the target column
+    date_col : str
+        The name of the date column
+        
+    Returns:
+    --------
+    ts_data : pandas DataFrame
+        Data prepared for time series analysis
+    """
+    # Ensure data is sorted by date
+    ts_data = data.copy()
+    if date_col in ts_data.columns:
+        ts_data[date_col] = pd.to_datetime(ts_data[date_col])
+        ts_data = ts_data.sort_values(date_col)
+        
+        # Set date as index for time series analysis
+        ts_data = ts_data.set_index(date_col)
+    
+    return ts_data
+
+def check_stationarity(time_series):
+    """
+    Simplified check for stationarity by comparing mean and variance across segments
+    
+    Parameters:
+    -----------
+    time_series : pandas Series
+        The time series to check
+        
+    Returns:
+    --------
+    is_stationary : bool
+        True if the time series appears stationary, False otherwise
+    p_value : float
+        A placeholder p-value (not actually calculated)
+    """
+    # Split the series into segments
+    segments = 3
+    segment_size = len(time_series) // segments
+    
+    means = []
+    variances = []
+    
+    # Calculate mean and variance for each segment
+    for i in range(segments):
+        start = i * segment_size
+        end = (i + 1) * segment_size if i < segments - 1 else len(time_series)
+        segment = time_series[start:end]
+        means.append(segment.mean())
+        variances.append(segment.var())
+    
+    # Check if means and variances are similar across segments
+    mean_diff = max(means) - min(means)
+    var_diff = max(variances) - min(variances)
+    
+    # Simplified criteria for stationarity
+    is_stationary = (mean_diff / abs(np.mean(means)) < 0.1) and (var_diff / abs(np.mean(variances)) < 0.1)
+    
+    return is_stationary, 0.05  # Placeholder p-value
+
+def make_stationary(time_series, max_diff=2):
+    """
+    Make a time series stationary by differencing
+    
+    Parameters:
+    -----------
+    time_series : pandas Series
+        The time series to make stationary
+    max_diff : int
+        Maximum number of differencing operations
+        
+    Returns:
+    --------
+    stationary_series : pandas Series
+        The stationary time series
+    d : int
+        The number of differencing operations performed
+    """
+    series = time_series.copy()
+    d = 0
+    
+    # Check initial stationarity
+    is_stationary, _ = check_stationarity(series)
+    
+    # Apply differencing until stationary or max_diff reached
+    while not is_stationary and d < max_diff:
+        series = series.diff().dropna()
+        d += 1
+        is_stationary, _ = check_stationarity(series)
+    
+    return series, d
+
+def decompose_time_series(time_series, period=24):
+    """
+    Simplified decomposition of time series into trend and seasonal components
+    
+    Parameters:
+    -----------
+    time_series : pandas Series
+        The time series to decompose
+    period : int
+        The seasonal period (e.g., 24 for hourly data with daily seasonality)
+        
+    Returns:
+    --------
+    decomposition : dict
+        Dictionary containing trend, seasonal, and residual components
+    """
+    # Ensure no missing values
+    time_series = time_series.fillna(method='ffill')
+    
+    # Calculate trend using rolling mean
+    trend = time_series.rolling(window=period, center=True).mean()
+    
+    # Fill NaN values at the beginning and end
+    trend = trend.fillna(method='bfill').fillna(method='ffill')
+    
+    # Calculate seasonal component
+    # For each position in the period, calculate the average deviation from trend
+    seasonal = pd.Series(index=time_series.index)
+    
+    for i in range(period):
+        seasonal_indices = [x for x in range(len(time_series)) if x % period == i]
+        seasonal_values = time_series.iloc[seasonal_indices] - trend.iloc[seasonal_indices]
+        seasonal_mean = seasonal_values.mean()
+        
+        for idx in seasonal_indices:
+            if idx < len(seasonal):
+                seasonal.iloc[idx] = seasonal_mean
+    
+    # Calculate residual
+    residual = time_series - trend - seasonal
+    
+    return {
+        'trend': trend,
+        'seasonal': seasonal,
+        'residual': residual
+    }
+
+def prepare_lstm_data(data, target_col, feature_cols, sequence_length=24):
+    """
+    Prepare data for LSTM model by creating sequences
+    
+    Parameters:
+    -----------
+    data : pandas DataFrame
+        The input data
+    target_col : str
+        The name of the target column
+    feature_cols : list
+        List of feature column names
+    sequence_length : int
+        The length of sequences to create
+        
+    Returns:
+    --------
+    X : numpy array
+        The input sequences for LSTM
+    y : numpy array
+        The target values
+    """
+    # Extract features and target
+    X_data = data[feature_cols].values
+    y_data = data[target_col].values
+    
+    # Create sequences
+    X, y = [], []
+    for i in range(len(X_data) - sequence_length):
+        X.append(X_data[i:i+sequence_length])
+        y.append(y_data[i+sequence_length])
+    
+    return np.array(X), np.array(y)
+
+def scale_time_series_data(X_train, X_test, y_train, y_test):
+    """
+    Scale features and target for time series models
+    
+    Parameters:
+    -----------
+    X_train, X_test : numpy arrays
+        The training and test features
+    y_train, y_test : numpy arrays
+        The training and test targets
+        
+    Returns:
+    --------
+    X_train_scaled, X_test_scaled : numpy arrays
+        The scaled features
+    y_train_scaled, y_test_scaled : numpy arrays
+        The scaled targets
+    feature_scaler, target_scaler : StandardScaler
+        The fitted scalers
+    """
+    # Scale features
+    feature_scaler = StandardScaler()
+    X_train_scaled = feature_scaler.fit_transform(X_train)
+    X_test_scaled = feature_scaler.transform(X_test)
+    
+    # Scale target
+    target_scaler = StandardScaler()
+    y_train_scaled = target_scaler.fit_transform(y_train.reshape(-1, 1)).flatten()
+    y_test_scaled = target_scaler.transform(y_test.reshape(-1, 1)).flatten()
+    
+    return X_train_scaled, X_test_scaled, y_train_scaled, y_test_scaled, feature_scaler, target_scaler

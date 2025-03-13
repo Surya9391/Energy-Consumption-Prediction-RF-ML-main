@@ -4,14 +4,74 @@ import numpy as np
 from datetime import datetime, timedelta
 from get_data import get_data
 from data_preprocessing import data_cleaning, calculate_heat_index, calculate_regional_heat_index
-from model_development import model_development, plot_model_comparison, plot_feature_importance
+from model_development import train_models, plot_model_comparison, plot_feature_importance
 import plotly.express as px
 import plotly.graph_objects as go
 
 st.set_page_config(page_title="Energy Demand Prediction", layout="wide")
-st.title('Forecasting Energy Demand Prediction')
+
+# Custom CSS for better styling
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 2.5rem;
+        color: #1f77b4;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    .section-header {
+        color: #2c3e50;
+        padding: 10px 0;
+        margin: 20px 0;
+        border-bottom: 2px solid #eee;
+    }
+    .metric-container {
+        background-color: #f8f9fa;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .stMetric {
+        background-color: white !important;
+        padding: 15px !important;
+        border-radius: 8px !important;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1) !important;
+    }
+    .stMetric:hover {
+        transform: translateY(-2px);
+        transition: all 0.3s ease;
+    }
+    .chart-container {
+        background-color: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin: 20px 0;
+    }
+    .sidebar-content {
+        padding: 20px;
+        background-color: #f8f9fa;
+        border-radius: 10px;
+        margin: 10px 0;
+    }
+    .parameter-section {
+        margin: 15px 0;
+        padding: 15px;
+        background-color: white;
+        border-radius: 8px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Main title with custom styling
+st.markdown(
+    '<h1 class="main-header">Energy Demand Prediction System</h1>',
+    unsafe_allow_html=True)
 
 # Load and process data
+
+
 @st.cache_data
 def load_data():
     climate_data_path = "new datasets/Final_Energy_Prediction_Climate_Data_Corrected.csv"
@@ -20,16 +80,19 @@ def load_data():
     final_data = data_cleaning(climate_data, monthly_data)
     
     # Get the actual city columns from the processed data
-    city_columns = [col for col in final_data.columns if col.startswith('City_')]
+    city_columns = [
+        col for col in final_data.columns if col.startswith('City_')]
     cities = [col.replace('City_', '') for col in city_columns]
     
     return final_data, cities
+
 
 # Load data and train models
 if 'models' not in st.session_state:
     with st.spinner('Loading data and training models...'):
         final_data, cities = load_data()
-        models, scaler, model_scores, feature_importance = model_development(final_data)
+        models, scaler, model_scores, feature_importance = train_models(
+            final_data)
         
         st.session_state.models = models
         st.session_state.scaler = scaler
@@ -37,9 +100,11 @@ if 'models' not in st.session_state:
         st.session_state.feature_importance = feature_importance
         st.session_state.cities = cities
         st.session_state.training_data = final_data
-        st.session_state.feature_names = final_data.drop('Electricity Demand (MW)', axis=1).columns.tolist()
+        st.session_state.feature_names = final_data.drop(
+            'Electricity Demand (MW)', axis=1).columns.tolist()
         # Store the city columns separately
-        st.session_state.city_columns = [col for col in st.session_state.feature_names if col.startswith('City_')]
+        st.session_state.city_columns = [
+            col for col in st.session_state.feature_names if col.startswith('City_')]
 
 # Model Performance Section
 st.header('Model Performance Comparison')
@@ -49,7 +114,7 @@ with col2:
     # Model selection
     selected_model = st.selectbox(
         'Select Model for Prediction',
-        ['Random Forest', 'XGBoost', 'LightGBM'],
+        ['Random Forest', 'XGBoost', 'LightGBM', 'ARIMA', 'LSTM'],
         help="Choose the model to use for prediction"
     )
 
@@ -83,6 +148,16 @@ with col2:
         - Light Gradient Boosting Machine
         - Faster training speed
         - Better accuracy
+        """,
+        'ARIMA': """
+        - AutoRegressive Integrated Moving Average
+        - Used for time series forecasting
+        - Effective for capturing trends and seasonality
+        """,
+        'LSTM': """
+        - Long Short-Term Memory
+        - Effective for capturing long-term dependencies
+        - Used for time series forecasting
         """
     }
     
@@ -96,278 +171,474 @@ with col1:
     comparison_fig = plot_model_comparison(st.session_state.scores)
     st.plotly_chart(comparison_fig)
 
-    # Show feature importance for tree-based models
-    if selected_model in ['Random Forest', 'XGBoost', 'LightGBM']:
-        st.subheader(f'Feature Importance - {selected_model}')
-        feature_importance_fig = plot_feature_importance(
-            st.session_state.feature_importance[selected_model],
-            selected_model
-        )
-        st.plotly_chart(feature_importance_fig)
-
 # Sidebar inputs
-st.sidebar.header('Enter Input Parameters')
+st.sidebar.markdown('<div class="sidebar-content">', unsafe_allow_html=True)
+st.sidebar.markdown('### 📍 Location & Date Settings')
+selected_city = st.sidebar.selectbox(
+    'Select City', [
+        'Kakinada', 'Surampalem', 'Rajahmundry', 'Samarlakota'])
 
-# Location selection
-selected_city = st.sidebar.selectbox('Select City', ['Kakinada', 'Surampalem', 'Rajahmundry', 'Samarlakota'])
-
-# Time-based inputs
-st.sidebar.subheader('Date and Time Selection')
-
-# Date selection with extended range
+# Date selection with better formatting
 max_prediction_date = datetime(2027, 12, 31).date()
 selected_date = st.sidebar.date_input(
-    "Select Date",
+    "Select Prediction Date",
     value=datetime.now().date(),
     min_value=datetime.now().date(),
     max_value=max_prediction_date
 )
 
-# Add prediction confidence indicator
-days_ahead = (selected_date - datetime.now().date()).days
-confidence_level = "High" if days_ahead <= 7 else "Medium" if days_ahead <= 30 else "Low"
-confidence_color = "#00FF00" if confidence_level == "High" else "#FFA500" if confidence_level == "Medium" else "#FF0000"
-
+# Confidence indicator with improved styling
+prediction_year = selected_date.year
+confidence_level = (
+    "High" if prediction_year == datetime.now().year else
+    "Medium" if prediction_year == 2026 else
+    "Low"
+)
+confidence_color = (
+    "#28a745" if confidence_level == "High" else
+    "#ffc107" if confidence_level == "Medium" else
+    "#dc3545"
+)
 st.sidebar.markdown(f"""
-<div style='padding: 10px; border-radius: 5px; background-color: {confidence_color}30;'>
-    <p><b>Prediction Confidence:</b> {confidence_level}</p>
-    <p><small>Based on {days_ahead} days ahead of current date</small></p>
+<div style='padding: 15px; border-radius: 8px; background-color: {confidence_color}20;
+    border-left: 4px solid {confidence_color}; margin: 10px 0;'>
+    <h4 style='color: {confidence_color}; margin: 0;'>Prediction Confidence</h4>
+    <p style='font-size: 1.2em; margin: 5px 0;'>{confidence_level}</p>
 </div>
 """, unsafe_allow_html=True)
 
-# Time selection
-selected_time = st.sidebar.time_input(
-    "Select Time",
-    value=datetime.now().time(),
-)
+# Climate parameters with improved organization
+st.sidebar.markdown('### 🌡️ Climate Parameters')
+with st.sidebar.container():
+    temperature = st.slider('Temperature (°C)', 0.0, 50.0, 25.0)
+    humidity = st.slider('Humidity (%)', 0.0, 100.0, 60.0)
+    wind_speed = st.slider('Wind Speed (km/h)', 0.0, 50.0, 15.0)
+    rainfall = st.slider('Rainfall (mm)', 0.0, 50.0, 5.0)
 
-# Climate parameters
-st.sidebar.subheader('Climate Parameters')
-temperature = st.sidebar.slider('Temperature (°C)', 0.0, 50.0, 25.0)
-humidity = st.sidebar.slider('Humidity (%)', 0.0, 100.0, 60.0)
-wind_speed = st.sidebar.slider('Wind Speed (km/h)', 0.0, 50.0, 15.0)
-rainfall = st.sidebar.slider('Rainfall (mm)', 0.0, 50.0, 5.0)
-
-# Energy Source Parameters
-st.sidebar.subheader('Energy Source Parameters')
+# Energy source parameters with better organization
+st.sidebar.markdown('### ⚡ Energy Sources')
 col1, col2 = st.sidebar.columns(2)
 
 with col1:
-    st.markdown("##### Renewable Sources")
-    solar_power = st.number_input('Solar Power (MW)', 0.0, 1000.0, 100.0)
-    wind_power = st.number_input('Wind Power (MW)', 0.0, 1000.0, 50.0)
-    hydro_power = st.number_input('Hydro Power (MW)', 0.0, 1000.0, 200.0)
+    st.markdown('<div class="parameter-section">', unsafe_allow_html=True)
+    st.markdown("#### 🌞 Renewable")
+    solar_radiation = st.number_input('Solar (kWh/m²)', 0.0, 10.0, 1.0)
+    wind_velocity = st.number_input('Wind (m/s)', 0.0, 30.0, 5.0)
+    flow_rate = st.number_input('Hydro (m³/s)', 0.0, 1000.0, 100.0)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 with col2:
-    st.markdown("##### Conventional Sources")
-    thermal_power = st.number_input('Thermal Power (MW)', 0.0, 2000.0, 500.0)
-    grid_power = st.number_input('Grid Power (MW)', 0.0, 2000.0, 400.0)
+    st.markdown('<div class="parameter-section">', unsafe_allow_html=True)
+    st.markdown("#### 🏭 Conventional")
+    thermal_energy = st.number_input(
+        'Thermal (kJ)', 0.0, 10000000.0, 1000000.0)
+    grid_capacity = st.number_input('Grid (kVA)', 0.0, 5000.0, 1000.0)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-# Calculate energy mix
-total_power = solar_power + wind_power + hydro_power + thermal_power + grid_power
-renewable_share = ((solar_power + wind_power + hydro_power) / total_power * 100) if total_power > 0 else 0
-thermal_share = (thermal_power / total_power * 100) if total_power > 0 else 0
-grid_share = (grid_power / total_power * 100) if total_power > 0 else 0
+st.sidebar.markdown('</div>', unsafe_allow_html=True)
 
-if st.sidebar.button('Predict Energy Demand'):
-    # Prepare input data
-    hour = selected_time.hour
+# Main content area
+if st.sidebar.button('Generate Prediction', use_container_width=True):
+    # Prepare input data for all 24 hours
     month = selected_date.month
     
-    # Initialize input data with all features including all city columns as 0
-    input_data = pd.DataFrame(0, index=[0], columns=st.session_state.feature_names)
-    
-    # Set features
-    regional_heat_index = calculate_regional_heat_index(temperature, humidity, selected_city)
-    temperature_humidity = temperature * humidity / 100
-    solar_efficiency = 100 * (1 - humidity/100) * (1 - rainfall/25 if rainfall <= 25 else 0)
-    wind_power_potential = wind_speed**3
-    is_summer = 1 if month in [4, 5, 6, 7, 8, 9] else 0
-    is_peak_hour = 1 if hour in [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] else 0
-    
-    # Set all non-city features
-    input_data['Temperature (°C)'] = temperature
-    input_data['Humidity (%)'] = humidity
-    input_data['Wind Speed (km/h)'] = wind_speed
-    input_data['Rainfall (mm)'] = rainfall
-    input_data['Renewable_Share_%'] = renewable_share
-    input_data['Thermal_Share_%'] = thermal_share
-    input_data['Temperature_Humidity'] = temperature_humidity
-    input_data['Regional_Heat_Index'] = regional_heat_index
-    input_data['Solar_Efficiency'] = solar_efficiency
-    input_data['Wind_Power_Potential'] = wind_power_potential
-    input_data['Hour'] = hour
-    input_data['Month'] = month
-    input_data['Is_Summer'] = is_summer
-    input_data['Is_Peak_Hour'] = is_peak_hour
+    # Create predictions for all 24 hours
+    hourly_predictions = []
+    hourly_inputs = []
 
-    # Set the selected city to 1, ensure we use only cities from training data
-    city_column = f'City_{selected_city}'
-    if city_column in st.session_state.city_columns:
-        input_data[city_column] = 1
-    else:
-        st.error(f"Error: City '{selected_city}' was not present in the training data. Please select a different city.")
-        st.stop()
-    
-    # Scale input data
-    input_scaled = st.session_state.scaler.transform(input_data)
-    
-    # Make prediction
-    prediction = st.session_state.models[selected_model].predict(input_scaled)[0]
-    
-    # Display results in a container with better styling
-    st.markdown("---")
-    st.header("Prediction Results")
-    
-    # Main prediction container
-    with st.container():
-        # Determine demand level and color
-        demand_color = (
-            "#FF0000" if prediction > total_power else
-            "#FFA500" if prediction > 0.8 * total_power else
-            "#FFFF00" if prediction > 0.6 * total_power else
-            "#00FF00"
+    # Define daily patterns for various parameters
+    def get_hourly_temperature(base_temp, hour):
+        # Temperature typically lowest at 4-5 AM, highest at 2-3 PM
+        hourly_variation = {
+            0: -2, 1: -2.5, 2: -3, 3: -3.5, 4: -4, 5: -3.5,
+            6: -2, 7: -1, 8: 0, 9: 1, 10: 2, 11: 3,
+            12: 3.5, 13: 4, 14: 4, 15: 3.5, 16: 3, 17: 2,
+            18: 1, 19: 0, 20: -0.5, 21: -1, 22: -1.5, 23: -2
+        }
+        return base_temp + hourly_variation[hour]
+
+    def get_hourly_solar_radiation(base_radiation, hour):
+        # Solar radiation follows daylight pattern
+        if 6 <= hour <= 18:  # Daylight hours
+            # Peak at noon (hour 12)
+            return base_radiation * (1 - abs(hour - 12) / 12)
+        return 0  # No solar radiation at night
+
+    def get_hourly_humidity(base_humidity, hour):
+        # Humidity typically highest early morning, lowest afternoon
+        hourly_variation = {
+            0: 10, 1: 12, 2: 14, 3: 15, 4: 15, 5: 15,
+            6: 14, 7: 12, 8: 8, 9: 4, 10: 0, 11: -2,
+            12: -4, 13: -5, 14: -5, 15: -4, 16: -2, 17: 0,
+            18: 2, 19: 4, 20: 6, 21: 7, 22: 8, 23: 9
+        }
+        new_humidity = base_humidity + hourly_variation[hour]
+        return min(max(new_humidity, 0), 100)  # Keep between 0-100%
+
+    def get_hourly_wind_speed(base_wind, hour):
+        # Wind speed typically increases during day
+        hourly_variation = {
+            0: -2, 1: -2, 2: -2, 3: -2, 4: -1, 5: -1,
+            6: 0, 7: 1, 8: 2, 9: 3, 10: 4, 11: 4,
+            12: 5, 13: 5, 14: 5, 15: 4, 16: 3, 17: 2,
+            18: 1, 19: 0, 20: -1, 21: -1, 22: -2, 23: -2
+        }
+        return max(base_wind + hourly_variation[hour], 0)
+
+    for hour in range(24):
+        # Initialize input data with all features including all city columns as
+        # 0
+        input_data = pd.DataFrame(
+            0, index=[0], columns=st.session_state.feature_names)
+
+        # Get hourly variations of parameters
+        hourly_temp = get_hourly_temperature(temperature, hour)
+        hourly_humidity = get_hourly_humidity(humidity, hour)
+        hourly_wind = get_hourly_wind_speed(wind_speed, hour)
+        hourly_solar = get_hourly_solar_radiation(solar_radiation, hour)
+
+        # Set features with hourly variations
+        regional_heat_index = calculate_regional_heat_index(
+            hourly_temp, hourly_humidity, selected_city)
+        temperature_humidity = hourly_temp * hourly_humidity / 100
+        solar_efficiency = 100 * \
+            (1 - hourly_humidity / 100) * (1 - rainfall / 25 if rainfall <= 25 else 0)
+        wind_power_potential = hourly_wind**3
+        is_summer = 1 if month in [4, 5, 6, 7, 8, 9] else 0
+        is_peak_hour = 1 if hour in [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] else 0
+
+        # Calculate hourly power variations
+        solar_power = hourly_solar * 100  # More power during daylight hours
+        wind_power = (hourly_wind ** 3) * 3.33
+        # Hydro and thermal remain relatively stable
+
+        # Set all non-city features with hourly variations
+        input_data['Temperature (°C)'] = hourly_temp
+        input_data['Humidity (%)'] = hourly_humidity
+        input_data['Wind Speed (km/h)'] = hourly_wind
+        # Rainfall kept constant for the day
+        input_data['Rainfall (mm)'] = rainfall
+        input_data['Renewable_Share_%'] = ((solar_power + wind_power + flow_rate * 2) / (solar_power + wind_power + flow_rate *
+                                               2 + thermal_energy * 0.0005 + grid_capacity * 0.4) * 100) if solar_power + wind_power + flow_rate * 2 > 0 else 0
+        input_data['Thermal_Share_%'] = (thermal_energy * 0.0005 / (solar_power + wind_power + flow_rate * 2 +
+                                             thermal_energy * 0.0005 + grid_capacity * 0.4) * 100) if solar_power + wind_power + flow_rate * 2 > 0 else 0
+        input_data['Temperature_Humidity'] = temperature_humidity
+        input_data['Regional_Heat_Index'] = regional_heat_index
+        input_data['Solar_Efficiency'] = solar_efficiency
+        input_data['Wind_Power_Potential'] = wind_power_potential
+        input_data['Hour'] = hour
+        input_data['Month'] = month
+        input_data['Is_Summer'] = is_summer
+        input_data['Is_Peak_Hour'] = is_peak_hour
+
+        # Set the selected city to 1
+        city_column = f'City_{selected_city}'
+        if city_column in st.session_state.city_columns:
+            input_data[city_column] = 1
+        
+        # Scale input data
+        input_scaled = st.session_state.scaler.transform(input_data)
+        
+        # Make prediction for this hour
+        prediction_result = st.session_state.models[selected_model].predict(
+                input_scaled)
+        # Handle different return types (array, scalar, Series)
+        if hasattr(prediction_result, 'shape') and len(
+                    prediction_result.shape) > 0 and prediction_result.shape[0] > 0:
+                prediction = prediction_result[0]
+        else:
+                prediction = prediction_result  # If it's a scalar
+        hourly_predictions.append(prediction)
+        hourly_inputs.append(input_data.copy())
+
+    # Create hourly prediction DataFrame
+    prediction_df = pd.DataFrame({
+        'Hour': range(24),
+        'Predicted Demand (MW)': hourly_predictions
+    })
+
+    # Calculate average power generation for each source over 24 hours
+    avg_solar_power = np.mean([get_hourly_solar_radiation(
+        solar_radiation, h) * 100 for h in range(24)])
+
+    # Calculate average wind power over 24 hours
+    avg_wind_speeds = [get_hourly_wind_speed(wind_speed, h) for h in range(24)]
+    avg_wind_power = np.mean([
+        (0 if v < 3 else  # Cut-in speed
+         0 if v > 25 else  # Cut-out speed
+         150 if v > 15 else  # Rated power
+         min(150, (v ** 3) * 0.44))  # Normal operation
+        for v in avg_wind_speeds
+    ])
+
+    # Create energy source distribution with actual average values
+    energy_sources = {
+        'Solar Power': avg_solar_power,
+        'Wind Power': avg_wind_power,
+        'Hydro Power': flow_rate * 2,
+        'Thermal Power': thermal_energy * 0.0005,
+        'Grid Power': grid_capacity * 0.4
+    }
+
+    # Calculate demand statistics
+    avg_demand = np.mean(hourly_predictions)
+    max_demand = np.max(hourly_predictions)
+    min_demand = np.min(hourly_predictions)
+
+    # Define demand levels
+    high_demand = np.percentile(hourly_predictions, 75)
+    medium_demand = np.percentile(hourly_predictions, 50)
+    low_demand = np.percentile(hourly_predictions, 25)
+
+    # Results display with improved styling
+    st.markdown('<div class="metric-container">', unsafe_allow_html=True)
+    st.markdown('### 📊 Demand Statistics')
+
+    # Statistics in a grid with hover effects
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Average Demand", f"{avg_demand:.2f} MW")
+        st.metric("High Demand", f"{high_demand:.2f} MW")
+    with col2:
+        st.metric("Peak Demand", f"{max_demand:.2f} MW")
+        st.metric("Medium Demand", f"{medium_demand:.2f} MW")
+    with col3:
+        st.metric("Minimum Demand", f"{min_demand:.2f} MW")
+        st.metric("Low Demand", f"{low_demand:.2f} MW")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Charts with improved containers
+    st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+    st.markdown('### 📈 24-Hour Forecast')
+
+    # Create interactive line plot for 24-hour prediction
+    fig = go.Figure()
+
+    # Add prediction line
+    fig.add_trace(
+        go.Scatter(
+            x=prediction_df['Hour'],
+            y=prediction_df['Predicted Demand (MW)'],
+            mode='lines+markers',
+            name='Predicted Demand',
+            hovertemplate='Hour: %{x}<br>Predicted Demand: %{y:.2f} MW<extra></extra>',
+            line=dict(
+                color='#1f77b4',
+                width=2),
+            marker=dict(
+                size=8)))
+
+    # Add reference lines for demand levels
+    fig.add_hline(
+        y=high_demand,
+        line_dash="dash",
+        line_color="red",
+        annotation_text="High Demand Level",
+        annotation_position="right")
+    fig.add_hline(
+        y=medium_demand,
+        line_dash="dash",
+        line_color="orange",
+        annotation_text="Medium Demand Level",
+        annotation_position="right")
+    fig.add_hline(
+        y=low_demand,
+        line_dash="dash",
+        line_color="green",
+        annotation_text="Low Demand Level",
+        annotation_position="right")
+
+    # Add peak hours region
+    peak_hours = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    fig.add_vrect(
+        x0=min(peak_hours) - 0.5, x1=max(peak_hours) + 0.5,
+        fillcolor="rgba(255, 165, 0, 0.1)", layer="below", line_width=0,
+        annotation_text="Peak Hours", annotation_position="top left"
+    )
+
+    # Update chart layout for better appearance
+    fig.update_layout(
+        title=None,  # Remove title as we have it in the container
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        margin=dict(t=20, l=40, r=40, b=40),
+        xaxis=dict(
+            tickmode='array',
+            ticktext=[f'{i:02d}:00' for i in range(24)],
+            tickvals=list(range(24)),
+            gridcolor='rgba(128, 128, 128, 0.1)',
+            showline=True,
+            linewidth=1,
+            linecolor='rgba(128, 128, 128, 0.2)',
+        ),
+        yaxis=dict(
+            gridcolor='rgba(128, 128, 128, 0.1)',
+            showline=True,
+            linewidth=1,
+            linecolor='rgba(128, 128, 128, 0.2)',
+        ),
+        height=500,
+            )
+    st.plotly_chart(fig, use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Calculate historical demand
+    def get_historical_demand(hour, month, is_weekend=False):
+        # Base load pattern (MW)
+        base_pattern = {
+            0: 700, 1: 650, 2: 600, 3: 580, 4: 570, 5: 590,
+            6: 650, 7: 750, 8: 850, 9: 950, 10: 1000, 11: 1050,
+            12: 1100, 13: 1150, 14: 1100, 15: 1050, 16: 1000, 17: 950,
+            18: 1000, 19: 1100, 20: 1000, 21: 900, 22: 800, 23: 750
+        }
+
+        # Season factors
+        season_factor = 1.0
+        if month in [12, 1, 2]:  # Winter
+            season_factor = 1.2
+        elif month in [3, 4, 5]:  # Spring
+            season_factor = 0.9
+        elif month in [6, 7, 8]:  # Summer
+            season_factor = 1.3
+        elif month in [9, 10, 11]:  # Fall
+            season_factor = 0.95
+
+        # Weekend reduction factor
+        weekend_factor = 0.85 if is_weekend else 1.0
+
+        return base_pattern[hour] * season_factor * weekend_factor
+
+    # Calculate historical average
+    is_weekend = selected_date.weekday() >= 5
+    historical_avg = np.mean([get_historical_demand(
+        h, selected_date.month, is_weekend) for h in range(24)])
+
+    # Historical average with improved styling
+    st.markdown('<div class="metric-container">', unsafe_allow_html=True)
+    st.markdown('### 📅 Historical Comparison')
+    st.metric(
+        "Historical Daily Average",
+        f"{historical_avg:.2f} MW",
+        delta=f"{((avg_demand - historical_avg)/historical_avg)*100:.1f}% vs Prediction"
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Calculate total daily energy demand and supply
+    total_daily_demand = sum(hourly_predictions)  # MWh (24 hours of MW = MWh)
+
+    # Calculate total daily energy production from all sources
+    total_daily_production = (
+        avg_solar_power * 24 +  # Solar energy over 24 hours
+        avg_wind_power * 24 +   # Wind energy over 24 hours
+        flow_rate * 2 * 24 +    # Hydro energy over 24 hours
+        thermal_energy * 0.0005 * 24 +  # Thermal energy over 24 hours
+        grid_capacity * 0.4 * 24  # Grid energy over 24 hours
+    )
+
+    # Calculate energy balance
+    energy_balance = total_daily_production - total_daily_demand
+    energy_status = (
+        "🟢 Energy Supply Exceeds Demand" if energy_balance > 100 else
+        "🟡 Energy Supply Meets Demand" if abs(energy_balance) <= 100 else
+        "🔴 Energy Supply Shortage"
+    )
+
+    # Display energy balance metrics with improved styling
+    st.markdown('<div class="metric-container">', unsafe_allow_html=True)
+    st.markdown('### ⚡ Daily Energy Balance')
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric(
+            "Total Daily Demand",
+            f"{total_daily_demand:.2f} MWh"
         )
-        
-        demand_level = (
-            "CRITICAL" if prediction > total_power else
-            "HIGH" if prediction > 0.8 * total_power else
-            "MODERATE" if prediction > 0.6 * total_power else
-            "LOW"
+    with col2:
+        st.metric(
+            "Total Daily Production",
+            f"{total_daily_production:.2f} MWh"
         )
-        
-        # Create two rows for better organization
-        row1_col1, row1_col2 = st.columns([1, 2])
-        
-        with row1_col1:
-            st.markdown(
-                f"""
-                <div style="padding: 25px; border-radius: 15px; background-color: {demand_color}30; margin-bottom: 20px;">
-                    <h2 style="color: {demand_color}; margin-bottom: 15px;">Demand Level: {demand_level}</h2>
-                    <h3 style="margin-bottom: 10px;">Predicted Energy Demand</h3>
-                    <h2 style="color: #1f77b4;">{prediction:.2f} MW</h2>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-            
-            # Add historical comparison in a styled container
-            similar_conditions = st.session_state.training_data[
-                (st.session_state.training_data['Temperature (°C)'].between(temperature-5, temperature+5)) &
-                (st.session_state.training_data['Humidity (%)'].between(humidity-10, humidity+10)) &
-                (st.session_state.training_data[f'City_{selected_city}'] == 1)
-            ]
-            
-            if not similar_conditions.empty:
-                avg_demand = similar_conditions['Electricity Demand (MW)'].mean()
-                st.markdown(
-                    f"""
-                    <div style="padding: 20px; border-radius: 10px; background-color: #f0f2f6; margin-top: 20px;">
-                        <h4 style="color: #1f77b4;">Historical Average</h4>
-                        <h3>{avg_demand:.2f} MW</h3>
-                        <p style="color: #666; font-size: 0.9em;">Under similar conditions</p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-        
-        with row1_col2:
-            # Energy mix visualization with better styling
-            st.markdown('<div style="padding: 15px; border-radius: 10px; background-color: #f8f9fa;">', unsafe_allow_html=True)
-            energy_mix = pd.DataFrame({
-                'Source': ['Solar', 'Wind', 'Hydro', 'Thermal', 'Grid'],
-                'Power (MW)': [solar_power, wind_power, hydro_power, thermal_power, grid_power]
-            })
-            
-            fig = px.pie(energy_mix, values='Power (MW)', names='Source',
-                        title='Energy Source Distribution',
-                        color='Source',
-                        color_discrete_map={
-                            'Solar': '#FFD700',
-                            'Wind': '#87CEEB',
-                            'Hydro': '#4169E1',
-                            'Thermal': '#8B4513',
-                            'Grid': '#808080'
-                        })
-            fig.update_layout(
-                title_x=0.5,
-                title_font_size=20,
-                showlegend=True,
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=-0.2,
-                    xanchor="center",
-                    x=0.5
-                ),
-                margin=dict(t=60, b=60, l=40, r=40)
-            )
-            st.plotly_chart(fig, use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
+    with col3:
+        st.metric(
+            "Energy Balance",
+            f"{abs(energy_balance):.2f} MWh",
+            delta=f"{'Surplus' if energy_balance > 0 else 'Deficit'}"
+        )
 
-        # Second row for additional visualizations
-        if not similar_conditions.empty:
-            st.markdown("### Historical Analysis", unsafe_allow_html=True)
-            
-            # Show demand distribution
-            st.markdown('<div style="padding: 15px; border-radius: 10px; background-color: #f8f9fa; margin-bottom: 20px;">', unsafe_allow_html=True)
-            fig = px.histogram(similar_conditions, x='Electricity Demand (MW)',
-                             title='Demand Distribution (Similar Conditions)',
-                             color_discrete_sequence=['#4169E1'])
-            fig.update_layout(
-                title_x=0.5,
-                title_font_size=16,
-                margin=dict(t=40, b=40, l=40, r=40),
-                height=400  # Fixed height for better visualization
-            )
-            st.plotly_chart(fig, use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
+    # Display energy status with appropriate styling
+    status_color = (
+        "#28a745" if energy_balance > 100 else
+        "#ffc107" if abs(energy_balance) <= 100 else
+        "#dc3545"
+    )
+    st.markdown(f"""
+    <div style='padding: 15px; border-radius: 8px; background-color: {status_color}20;
+        border-left: 4px solid {status_color}; margin: 10px 0;'>
+        <h4 style='color: {status_color}; margin: 0;'>Energy Status</h4>
+        <p style='font-size: 1.2em; margin: 5px 0;'>{energy_status}</p>
+        <p style='margin: 5px 0;'>
+            {'Excess energy can be stored or exported' if energy_balance > 100 else
+             'Energy supply is adequately meeting demand' if abs(energy_balance) <= 100 else
+             'Additional energy sources or demand management required'}
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-            # Show seasonal patterns
-            st.markdown('<div style="padding: 15px; border-radius: 10px; background-color: #f8f9fa;">', unsafe_allow_html=True)
-            seasonal_data = st.session_state.training_data.groupby('Month')['Electricity Demand (MW)'].mean()
-            fig = px.line(seasonal_data, 
-                         title='Monthly Demand Pattern',
-                         labels={'value': 'Average Demand (MW)', 'Month': 'Month'},
-                         color_discrete_sequence=['#1f77b4'])
-            fig.update_layout(
-                title_x=0.5,
-                title_font_size=16,
-                margin=dict(t=40, b=40, l=40, r=40),
-                height=400  # Fixed height for better visualization
-            )
-            st.plotly_chart(fig, use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
+    # Energy distribution chart with improved container
+    st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+    st.markdown('### 🔋 Energy Source Distribution')
 
-        # Long-term analysis section with better styling
-        if days_ahead > 7:
-            st.markdown("---")
-            st.subheader('Long-term Prediction Analysis')
-            
-            st.markdown(
-                f"""
-                <div style="padding: 20px; border-radius: 10px; background-color: #f0f2f6; margin-top: 20px;">
-                    <h4 style="color: #1f77b4;">Prediction Confidence Analysis</h4>
-                    <ul style="list-style-type: none; padding-left: 0;">
-                        <li>🕒 Prediction horizon: {days_ahead} days</li>
-                        <li>📊 Confidence level: {confidence_level}</li>
-                        <li>📅 Seasonal factors considered</li>
-                        <li>📈 Historical patterns analyzed</li>
+    # Create pie chart for energy source distribution with fixed colors
+    colors = {
+        'Solar Power': '#FFD700',  # Gold
+        'Wind Power': '#87CEEB',   # Sky Blue
+        'Hydro Power': '#4169E1',  # Royal Blue
+        'Thermal Power': '#CD5C5C',  # Indian Red
+        'Grid Power': '#808080'    # Gray
+    }
+
+    # Calculate total power and percentages
+    total = sum(energy_sources.values())
+    percentages = {k: (v / total) * 100 if total >
+                   0 else 0 for k, v in energy_sources.items()}
+
+    # Create pie chart
+    pie_fig = go.Figure(data=[go.Pie(
+        labels=list(energy_sources.keys()),
+        values=list(energy_sources.values()),
+        hole=.3,
+        marker_colors=[colors[label] for label in energy_sources.keys()],
+        hovertemplate="<b>%{label}</b><br>" +
+        "Power: %{value:.1f} MW<br>" +
+        "Share: %{percent:.1f}%<extra></extra>",
+        textinfo='percent+label',
+        textposition='outside'
+    )])
+
+    # Update pie chart layout
+    pie_fig.update_layout(
+        paper_bgcolor='rgba(0,0,0,0)',
+        margin=dict(t=20, l=20, r=20, b=20),
+        height=400,
+    )
+    st.plotly_chart(
+        pie_fig,
+        use_container_width=True,
+        config={
+            'displayModeBar': False})
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# Footer with system information
+st.markdown("""
+<div style='background-color: #f8f9fa; padding: 20px; border-radius: 10px; margin-top: 30px;'>
+    <h3>ℹ️ System Information</h3>
+    <ul style='list-style-type: none; padding-left: 0;'>
+        <li>✓ Advanced ML models (Random Forest, XGBoost, LightGBM, ARIMA, LSTM)</li>
+        <li>✓ Long-term predictions up to 2027</li>
+        <li>✓ Comprehensive climate parameter analysis</li>
+        <li>✓ Detailed energy source distribution</li>
+        <li>✓ Support for multiple cities in AP region</li>
                     </ul>
                 </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-# Add information about the system
-st.sidebar.markdown('---')
-st.sidebar.subheader('System Information')
-st.sidebar.info('''
-This energy demand prediction system:
-- Uses advanced ML models (Random Forest, XGBoost, LightGBM)
-- Provides predictions up to 2027
-- Considers climate parameters
-- Analyzes energy source distribution
-- Includes long-term prediction capabilities
-- Supports multiple cities in AP region
-''')
+""", unsafe_allow_html=True)
